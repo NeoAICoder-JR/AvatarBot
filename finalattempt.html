@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VictoryVee Live</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+    #chatbox { position: fixed; bottom: 20px; left: 20px; display: flex; }
+    #userInput { padding: 8px; width: 300px; }
+    #sendBtn { padding: 8px 12px; background-color: #007bff; color: white; border: none; cursor: pointer; }
+    #avatar-container {  bottom: 20px; right: 20px; height: 640px; background-color: black; border-radius: 8px; overflow: hidden; }
+    video { width: 100%; height: 100%; object-fit: cover; }
+  </style>
+
+  <!-- ✅ Properly load LiveKitClient -->
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+</head>
+<body>
+  <h1 style="color: #007bff;
+    font-size: 2.5rem;">VictoryVee is Live</h1>
+  <p>Ask a tennis question below:</p>
+
+  <div id="avatar-container">
+    <video id="mediaElement" autoplay></video>
+  </div>
+
+  <div id="chatbox">
+    <input type="text" id="userInput" placeholder="e.g. Will Djokovic beat Sinner?" />
+    <button id="sendBtn">Send</button>
+  </div>
+
+  <script defer>
+    const API_CONFIG = {
+      apiKey: "ZmU2ZDM4N2RlMjI4NGI0NWJlYjk2NDc2ZmZkYWI0YTQtMTc0NjYyNzkyOQ==",
+      serverUrl: "https://api.heygen.com",
+      avatarID: "cc84ba9315154900ad4ea419bdd4bac5",
+    };
+    let sessionInfo, sessionToken, webSocket, room, mediaStream;
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      await createNewSession();
+      await startStreamingSession();
+      document.getElementById("sendBtn").addEventListener("click", handleUserQuery);
+    });
+
+    // Helper function to update status
+    function updateStatus(message) {
+      const timestamp = new Date().toLocaleTimeString();
+      console.log(`✅ [${timestamp}] ${message} `);
+    }
+
+    // Get session token
+    async function getSessionToken() {
+      const response = await fetch(
+        `${API_CONFIG.serverUrl}/v1/streaming.create_token`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Api-Key": API_CONFIG.apiKey,
+          },
+        }
+      );
+
+      const data = await response.json();
+      sessionToken = data.data.token;
+      updateStatus("Session token obtained");
+    }
+
+    // Connect WebSocket
+    async function connectWebSocket(sessionId) {
+      const params = new URLSearchParams({
+        session_id: sessionId,
+        session_token: sessionToken,
+        silence_response: false,
+        opening_text: "Hello, how can I help you?",
+        stt_language: "en",
+      });
+
+      webSocket = new WebSocket(sessionInfo.realtime_endpoint);
+
+      // Handle WebSocket events
+      webSocket.addEventListener("message", (event) => {
+        const eventData = JSON.parse(event.data);
+        console.log("Raw WebSocket event:", eventData);
+      });
+    }
+
+    // Create new session
+    async function createNewSession() {
+      if (!sessionToken) {
+        await getSessionToken();
+      }
+
+      const response = await fetch(
+        `${API_CONFIG.serverUrl}/v1/streaming.new`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionToken}`,
+          },
+          body: JSON.stringify({
+            quality: "high",
+            avatar_id: API_CONFIG.avatarID,
+            // voice: {
+            //   voice_id: voiceID.value,
+            //   rate: 1.0,
+            // },
+            version: "v2",
+            video_encoding: "H264",
+          }),
+        }
+      );
+
+      const data = await response.json();
+      sessionInfo = data.data;
+
+      // Create LiveKit Room
+      room = new LivekitClient.Room({
+        adaptiveStream: true,
+        dynacast: true,
+        videoCaptureDefaults: {
+          resolution: LivekitClient.VideoPresets.h720.resolution,
+        },
+      });
+
+      // Handle room events
+      room.on(LivekitClient.RoomEvent.DataReceived, (message) => {
+        const data = new TextDecoder().decode(message);
+        console.log("Room message:", JSON.parse(data));
+      });
+
+      // Handle media streams
+      mediaStream = new MediaStream();
+      room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+        if (track.kind === "video" || track.kind === "audio") {
+          mediaStream.addTrack(track.mediaStreamTrack);
+          if (
+            mediaStream.getVideoTracks().length > 0 &&
+            mediaStream.getAudioTracks().length > 0
+          ) {
+            const mediaElement = document.getElementById("mediaElement");
+            mediaElement.srcObject = mediaStream;
+            updateStatus("Media stream ready");
+          }
+        }
+      });
+
+      // Handle media stream removal
+      room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
+        const mediaTrack = track.mediaStreamTrack;
+        if (mediaTrack) {
+          mediaStream.removeTrack(mediaTrack);
+        }
+      });
+
+      // Handle room connection state changes
+      room.on(LivekitClient.RoomEvent.Disconnected, (reason) => {
+        updateStatus(`Room disconnected: ${reason}`);
+      });
+
+      await room.prepareConnection(sessionInfo.url, sessionInfo.access_token);
+      updateStatus("Connection prepared");
+
+      // Connect WebSocket after room preparation
+      await connectWebSocket(sessionInfo.session_id);
+
+      updateStatus("Session created successfully");
+    }
+
+    // Start streaming session
+    async function startStreamingSession() {
+      const startResponse = await fetch(
+        `${API_CONFIG.serverUrl}/v1/streaming.start`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionToken}`,
+          },
+          body: JSON.stringify({
+            session_id: sessionInfo.session_id,
+          }),
+        }
+      );
+
+      // Connect to LiveKit room
+      await room.connect(sessionInfo.url, sessionInfo.access_token);
+      updateStatus("Connected to room");
+      updateStatus("Streaming started successfully");
+    }
+
+    // Send text to avatar
+    async function sendText(text, taskType = "repeat") {
+      if (!sessionInfo) {
+        updateStatus("No active session");
+        return;
+      }
+
+      const response = await fetch(
+        `${API_CONFIG.serverUrl}/v1/streaming.task`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionToken}`,
+          },
+          body: JSON.stringify({
+            session_id: sessionInfo.session_id,
+            text: text,
+            task_type: taskType,
+          }),
+        }
+      );
+
+      updateStatus(`Sent text (${taskType}): ${text}`);
+    }
+
+    // Close session
+    async function closeSession() {
+      if (!sessionInfo) {
+        updateStatus("No active session");
+        return;
+      }
+
+      const response = await fetch(
+        `${API_CONFIG.serverUrl}/v1/streaming.stop`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionToken}`,
+          },
+          body: JSON.stringify({
+            session_id: sessionInfo.session_id,
+          }),
+        }
+      );
+
+      // Close WebSocket
+      if (webSocket) {
+        webSocket.close();
+      }
+      // Disconnect from LiveKit room
+      if (room) {
+        room.disconnect();
+      }
+
+      mediaElement.srcObject = null;
+      sessionInfo = null;
+      room = null;
+      mediaStream = null;
+      sessionToken = null;
+      document.querySelector("#startBtn").disabled = false;
+
+      updateStatus("Session closed");
+    }
+
+    async function handleUserQuery() {
+      const input = document.getElementById("userInput");
+      const query = input.value.trim();
+      if (!query) return;
+      input.value = "";
+
+      try {
+        console.log("📨 Sending query:", query);
+        const res = await fetch("http://localhost:5000/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query })
+        });
+
+        const result = await res.json();
+        const response = result?.answer || "No prediction available.";
+        console.log("🎯 Prediction:", response);
+
+        sendText(response);
+      } catch (err) {
+        console.error("❌ Failed to fetch prediction:", err);
+      }
+    }
+  </script>
+</body>
+</html>
+
