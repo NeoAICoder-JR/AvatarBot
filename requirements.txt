@@ -1,0 +1,5 @@
+flask
+pandas
+joblib
+flask_cors
+difflib
