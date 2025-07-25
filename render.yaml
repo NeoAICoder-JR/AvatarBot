@@ -3,4 +3,4 @@ services:
     name: flask-app
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python flask_predictor.py
+    startCommand: gunicorn app:app
