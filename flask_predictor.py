@@ -10,7 +10,7 @@ app = Flask(__name__)
 CORS(app)
 
 # === LOAD DATA ===
-base_path = r"D:/Work/HeyGen/_devfiles"
+base_path = r"./"
 bio_df = pd.read_csv(f"{base_path}/player_bio.csv")
 form_df = pd.read_csv(f"{base_path}/player_form.csv")
 surface_elo_df = pd.read_csv(f"{base_path}/surface_specific_elo.csv")
@@ -174,7 +174,11 @@ def predict_api():
     except Exception as e:
         print("💥 Error in /predict:", e)
         return jsonify({ "answer": "❌ Internal server error." }), 500
-
+# === Test ===
+@app.route("/")
+def home():
+    return "Hello from Flask"
+    
 # === RUN APP ===
 if __name__ == "__main__":
     app.run(debug=True)
